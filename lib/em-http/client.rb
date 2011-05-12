@@ -48,12 +48,7 @@ module EventMachine
     def connection_completed
       @state = :response_header
 
-      head, body = build_request, @req.body
-      @conn.middleware.each do |m|
-        head, body = m.request(self, head, body) if m.respond_to?(:request)
-      end
-
-      send_request(head, body)
+      prepare_request
     end
 
     def on_request_complete
@@ -123,9 +118,10 @@ module EventMachine
       body.is_a?(Hash) ? form_encode_body(body) : body
     end
 
-    def build_request
+    def prepare_request
       head    = @req.headers ? munge_header_keys(@req.headers) : {}
-      proxy   = @req.proxy
+      file    = @req.file
+      body    = @req.body
 
       if @req.http_proxy?
         head['proxy-authorization'] = @req.proxy[:authorization] if @req.proxy[:authorization]
@@ -148,13 +144,11 @@ module EventMachine
       # Set the User-Agent if it hasn't been specified
       head['user-agent'] ||= "EventMachine HttpClient"
 
-      head
-    end
+      @conn.middleware.each do |m|
+        head, body = m.request(self, head, body) if m.respond_to?(:request)
+      end
 
-    def send_request(head, body)
-      body    = normalize_body(body)
-      file    = @req.file
-      query   = @req.query
+      body = normalize_body(body)
 
       # Set the Content-Length if file is given
       head['content-length'] = File.size(file) if file
@@ -167,7 +161,11 @@ module EventMachine
         head['content-type'] = 'application/x-www-form-urlencoded'
       end
 
-      request_header ||= encode_request(@req.method, @req.uri, query, @conn.connopts.proxy)
+      send_request(head, body)
+    end
+
+    def send_request(head, body)
+      request_header = encode_request(@req.method, @req.uri, @req.query, @conn.connopts.proxy)
       request_header << encode_headers(head)
       request_header << CRLF
       @conn.send_data request_header
